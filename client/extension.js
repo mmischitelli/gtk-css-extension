@@ -30,7 +30,7 @@ function activate(context) {
   const clientOptions = {
     documentSelector: [{ scheme: 'file', language: 'gtk-css' }],
     synchronize: {
-      // Notifica il server se cambiano file .gtk.css nel workspace
+      // Notify the server if .gtk.css files change in the workspace
       fileEvents: require('vscode').workspace.createFileSystemWatcher('**/*.gtk.css')
     }
   };

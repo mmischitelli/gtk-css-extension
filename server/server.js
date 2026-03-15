@@ -44,18 +44,18 @@ const gtkCustomData = {
   atDirectives: [
     {
       name: '@define-color',
-      description: 'GTK CSS: definisce una variabile colore. Uso: @define-color nome valore;',
+      description: 'GTK CSS: defines a color variable. Usage: @define-color name value;',
       references: [{ name: 'GTK CSS Overview', url: 'https://docs.gtk.org/gtk4/css-overview.html' }]
     }
   ],
   properties: [
-    { name: '-gtk-icon-source', description: 'Sorgente icona GTK.' },
-    { name: '-gtk-icon-size', description: 'Dimensione icona GTK.' },
-    { name: '-gtk-icon-style', description: 'Stile icona GTK.' },
-    { name: '-gtk-icon-transform', description: 'Trasformazione icona GTK.' },
-    { name: '-gtk-icon-palette', description: 'Palette icona GTK.' },
-    { name: '-gtk-secondary-caret-color', description: 'Colore caret secondario GTK.' },
-    { name: '-gtk-dpi', description: 'Scaling DPI GTK.' }
+    { name: '-gtk-icon-source', description: 'GTK icon source.' },
+    { name: '-gtk-icon-size', description: 'GTK icon size.' },
+    { name: '-gtk-icon-style', description: 'GTK icon style.' },
+    { name: '-gtk-icon-transform', description: 'GTK icon transform.' },
+    { name: '-gtk-icon-palette', description: 'GTK icon palette.' },
+    { name: '-gtk-secondary-caret-color', description: 'GTK secondary caret color.' },
+    { name: '-gtk-dpi', description: 'GTK DPI scaling.' }
   ],
   pseudoClasses: [
     { name: ':backdrop' },
@@ -83,17 +83,17 @@ const cssService = getCSSLanguageService({
   ]
 });
 
-// ─── Connessione LSP ─────────────────────────────────────────────────────────
+// ─── LSP Connection ─────────────────────────────────────────────────────────
 
 const connection = createConnection(ProposedFeatures.all);
 const documents = new TextDocuments(TextDocument);
 
-// ─── Raccolta colori da @define-color ────────────────────────────────────────
+// ─── Collecting colors from @define-color ────────────────────────────────────────
 
 /**
- * Estrae tutte le definizioni @define-color da un testo.
+ * Extracts all @define-color definitions from text.
  * @param {string} text
- * @returns {Map<string, string>} nome → valore
+ * @returns {Map<string, string>} name → value
  */
 function extractDefineColors(text) {
   const result = new Map();
@@ -106,12 +106,12 @@ function extractDefineColors(text) {
 }
 
 /**
- * Risolve ricorsivamente un colore GTK (segue i riferimenti @altronome).
+ * Recursively resolves a GTK color (follows @anothername references).
  *
- * @param {string} name nome del colore senza @
- * @param {Map<string, string>} knownColors mappa dei colori noti
- * @param {Set<string>} visited protezione cicli
- * @returns {string|null} il valore finale del colore (es. #hex) o null
+ * @param {string} name color name without @
+ * @param {Map<string, string>} knownColors map of known colors
+ * @param {Set<string>} visited cycle protection
+ * @returns {string|null} the final color value (e.g. #hex) or null
  */
 function resolveColor(name, knownColors, visited = new Set()) {
   if (visited.has(name)) return null;
@@ -120,38 +120,38 @@ function resolveColor(name, knownColors, visited = new Set()) {
   let value = knownColors.get(name);
   if (!value) return null;
 
-  // Se il valore è un riferimento a un altro colore @name
+  // If the value is a reference to another @name color
   if (value.startsWith('@')) {
     return resolveColor(value.slice(1), knownColors, visited);
   }
 
-  // Qui si potrebbero gestire alpha(), shade(), mix() ecc.
-  // Per ora restituiamo il valore così com'è.
+  // alpha(), shade(), mix() etc. could be handled here.
+  // For now, we return the value as is.
   return value;
 }
 
 /**
- * Genera un Data URI SVG per un quadratino di colore.
+ * Generates an SVG Data URI for a small color square.
  * @param {string} color
  * @returns {string}
  */
 function getColorPreviewUri(color) {
-  // Rimuovi spazi per sicurezza nel parametro SVG
+  // Remove spaces for safety in the SVG parameter
   const cleanColor = color.trim();
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" fill="${cleanColor}" stroke="rgba(128,128,128,0.5)" stroke-width="1"/></svg>`;
   return `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
 }
 
 /**
- * Estrae tutti gli @import da un testo e restituisce i percorsi assoluti.
+ * Extracts all @import statements from text and returns absolute paths.
  * @param {string} text
- * @param {string} documentFsPath  percorso assoluto del file corrente
+ * @param {string} documentFsPath  absolute path of the current file
  * @returns {string[]}
  */
 function extractImports(text, documentFsPath) {
   const dir = path.dirname(documentFsPath);
   const result = [];
-  // Supporta: @import "file.css"; @import 'file.css'; @import url("file.css");
+  // Supports: @import "file.css"; @import 'file.css'; @import url("file.css");
   const regex = /@import\s+(?:url\s*\(\s*)?['"]([^'"]+)['"]/g;
   let match;
   while ((match = regex.exec(text)) !== null) {
@@ -162,10 +162,10 @@ function extractImports(text, documentFsPath) {
 }
 
 /**
- * Raccoglie ricorsivamente tutti i colori @define-color dal documento
- * corrente e da tutti i file importati (con protezione dai cicli).
+ * Recursively collects all @define-color colors from the current document
+ * and all imported files (with cycle protection).
  *
- * @param {string} fsPath  - percorso assoluto del file da leggere
+ * @param {string} fsPath  - absolute path of the file to read
  * @param {Set<string>} visited
  * @returns {Map<string, string>}
  */
@@ -197,8 +197,8 @@ function collectAllColors(fsPath, visited = new Set()) {
 }
 
 /**
- * Versione che usa prima il documento aperto in memoria (se disponibile),
- * poi ricade su fs per i file importati.
+ * Version that first uses the document open in memory (if available),
+ * then falls back to fs for imported files.
  *
  * @param {TextDocument} document
  * @returns {Map<string, string>}
@@ -208,10 +208,10 @@ function collectAllColorsFromDocument(document) {
   const visited = new Set();
   visited.add(fsPath);
 
-  // Legge il documento corrente dalla memoria (sempre aggiornato)
+  // Reads the current document from memory (always up to date)
   const colors = extractDefineColors(document.getText());
 
-  // Segue gli @import dal file su disco
+  // Follows @import from the file on disk
   for (const importPath of extractImports(document.getText(), fsPath)) {
     const imported = collectAllColors(importPath, visited);
     for (const [name, value] of imported) {
@@ -222,29 +222,29 @@ function collectAllColorsFromDocument(document) {
   return colors;
 }
 
-// ─── Documento virtuale per validazione ──────────────────────────────────────
+// ─── Virtual Document for Validation ──────────────────────────────────────
 
 /**
- * Crea un testo virtuale dove ogni riferimento @color_name noto viene
- * sostituito con un placeholder CSS valido della STESSA lunghezza.
- * Questo evita che il parser CSS si confonda e produca errori a cascata
- * (es. "at-rule or selector expected" dentro @keyframes).
+ * Creates a virtual text where every known @color_name reference is
+ * replaced with a valid CSS placeholder of the SAME length.
+ * This prevents the CSS parser from getting confused and producing
+ * cascading errors (e.g. "at-rule or selector expected" inside @keyframes).
  *
- * Strategia di sostituzione per @name (lunghezza L = name.length + 1):
- *   - Se L <= 3: usa "red" troncato a L ("r", "re", "red")
- *   - Se L > 3:  usa "red" + spazi fino a L caratteri
- * Il padding con spazi è sicuro perché i valori CSS ignorano gli spazi extra.
+ * Replacement strategy for @name (length L = name.length + 1):
+ *   - If L <= 3: uses "red" truncated to L ("r", "re", "red")
+ *   - If L > 3:  uses "red" + spaces up to L characters
+ * Space padding is safe because CSS values ignore extra spaces.
  *
  * @param {string} text
  * @param {Map<string, string>} knownColors
  * @returns {string}
  */
 function buildVirtualText(text, knownColors) {
-  // Sostituisce solo @name fuori da @define-color e @import e altri at-rule noti
+  // Replaces only @name outside of @define-color, @import, and other known at-rules
   return text.replace(
     /@([a-zA-Z_][a-zA-Z0-9_-]*)/g,
     (match, name) => {
-      // Non toccare at-rule CSS/GTK standard
+      // Do not touch standard CSS/GTK at-rules
       const CSS_AT_RULES = new Set([
         'import', 'media', 'keyframes', 'charset', 'font-face', 'supports',
         'namespace', 'page', 'layer', 'container', 'document', 'viewport',
@@ -254,26 +254,26 @@ function buildVirtualText(text, knownColors) {
       if (CSS_AT_RULES.has(name)) return match;
 
       if (knownColors.has(name)) {
-        const L = match.length; // lunghezza originale incluso @
+        const L = match.length; // original length including @
         const placeholder = 'red';
         if (L <= placeholder.length) {
           return placeholder.slice(0, L);
         }
         return placeholder + ' '.repeat(L - placeholder.length);
       }
-      return match; // colore non noto: lascia invariato (sarà un vero errore)
+      return match; // unknown color: leave unchanged (will be a real error)
     }
   );
 }
 
 /**
- * Codici di errore residui che possono ancora essere falsi positivi GTK
- * (es. @define-color su versioni meno recenti del CSS language service).
+ * Residual error codes that might still be GTK false positives
+ * (e.g. @define-color on older versions of the CSS language service).
  */
 const GTK_SUPPRESSIBLE_CODES = new Set(['css-unknownatrule']);
 
 /**
- * Filtra gli eventuali diagnostics residui per @define-color.
+ * Filters any residual diagnostics for @define-color.
  *
  * @param {import('vscode-languageserver').Diagnostic[]} diagnostics
  * @returns {import('vscode-languageserver').Diagnostic[]}
@@ -285,7 +285,7 @@ function filterResidueDiagnostics(diagnostics) {
   });
 }
 
-// ─── Initializzazione LSP ────────────────────────────────────────────────────
+// ─── LSP Initialization ────────────────────────────────────────────────────
 
 connection.onInitialize(() => {
   /** @type {InitializeResult} */
@@ -302,7 +302,7 @@ connection.onInitialize(() => {
   return result;
 });
 
-// ─── Validazione ─────────────────────────────────────────────────────────────
+// ─── Validation ─────────────────────────────────────────────────────────────
 
 /**
  * @param {TextDocument} document
@@ -310,9 +310,9 @@ connection.onInitialize(() => {
 function validateDocument(document) {
   const knownColors = collectAllColorsFromDocument(document);
 
-  // Crea un documento virtuale con @color_name sostituiti da placeholder validi.
-  // Questo impedisce al parser CSS di produrre errori a cascata (es. dentro
-  // @keyframes quando incontra background-color: @red).
+  // Creates a virtual document with @color_name replaced by valid placeholders.
+  // This prevents the CSS parser from producing cascading errors (e.g. inside
+  // @keyframes when it encounters background-color: @red).
   const virtualText = buildVirtualText(document.getText(), knownColors);
   const virtualDoc = TextDocument.create(
     document.uri,
@@ -327,9 +327,9 @@ function validateDocument(document) {
     lint: {}
   });
 
-  // Converti da diagnostics CSS a diagnostics LSP.
-  // Le posizioni sono identiche all'originale perché buildVirtualText
-  // preserva la lunghezza di ogni token sostituito.
+  // Convert from CSS diagnostics to LSP diagnostics.
+  // Positions are identical to the original because buildVirtualText
+  // preserves the length of each replaced token.
   /** @type {import('vscode-languageserver').Diagnostic[]} */
   const lspDiagnostics = rawDiagnostics.map(d => ({
     severity: d.severity === 1 ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning,
@@ -404,7 +404,7 @@ connection.onHover(params => {
       return null;
   }
 
-  // Controlla se siamo sopra un @color_name GTK
+  // Checks if we are over a GTK @color_name
   const lineText = document.getText({
     start: { line: params.position.line, character: 0 },
     end: { line: params.position.line, character: 10000 }
@@ -459,7 +459,7 @@ connection.onHover(params => {
   return cssService.doHover(document, params.position, stylesheet);
 });
 
-// ─── Avvio ────────────────────────────────────────────────────────────────────
+// ─── Start ────────────────────────────────────────────────────────────────────
 
 documents.listen(connection);
 connection.listen();

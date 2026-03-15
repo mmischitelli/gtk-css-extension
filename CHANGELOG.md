@@ -2,6 +2,28 @@
 
 All notable changes to the **GTK CSS** extension will be documented in this file.
 
+## [1.2.0] - 2026-03-15
+
+### Added
+- **Language Server Architecture**: Implemented a dedicated Language Server Protocol (LSP) to handle GTK-specific features like `@define-color` and recursive imports.
+- **Enhanced Hovers**: Added visual color previews (SVG squares) and recursive resolution for color variable chains.
+- **Bundling**: Integrated `esbuild` for high-performance client and server bundling, significantly improving diagnostic accuracy and startup time.
+- **Improved Validation**: Added a virtual document system to prevent false-positive CSS errors when using GTK variables.
+- Localization: Full translation of the codebase (comments, logs, documentation) from Italian to English.
+- Integration Tests: Added an automated test suite covering completions, hovers, and diagnostics.
+
+## [1.1.0] - 2026-03-15
+
+### Added
+- Packaging improvements and publisher name update in `package.json`.
+- Prepared extension for marketplace submission.
+
+## [1.0.0] - 2026-03-14
+
+### Added
+- Initial stable release with core GTK-specific syntax support.
+- Stable language registration for `.gtk.css` files.
+
 ## [0.3.0] - 2026-03-14
 
 ### Added
