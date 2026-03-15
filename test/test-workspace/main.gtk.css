@@ -1,0 +1,9 @@
+@import "vars.gtk.css";
+
+@define-color local_color #0000ff;
+
+window {
+    background-color: @base_color;
+    color: @local_color;
+    -gtk-icon-source: builtin;
+}
