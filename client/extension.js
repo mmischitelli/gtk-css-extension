@@ -42,10 +42,7 @@ function activate(context) {
     clientOptions
   );
 
-  console.log('Starting Language Client...');
-  client.start().then(() => {
-    console.log('Language Client started successfully.');
-  }).catch(err => {
+  client.start().catch(err => {
     console.error('Language Client failed to start:', err);
   });
 }

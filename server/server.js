@@ -2,19 +2,11 @@
 'use strict';
 
 const fs = require('fs');
-const SERVER_LOG = '~/.cache/gtk-css-extension/server_debug.log';
-try {
-  fs.writeFileSync(SERVER_LOG, 'Server Start: ' + new Date().toISOString() + '\n');
-} catch (e) {}
-function log(msg) { try { fs.appendFileSync(SERVER_LOG, msg + '\n'); } catch (e) {} }
-
-log('Server module entry point reached');
 
 let createConnection, TextDocuments, ProposedFeatures, InitializeResult, TextDocumentSyncKind, DiagnosticSeverity, CompletionItemKind;
 let TextDocument, getCSSLanguageService, URI, path;
 
 try {
-  log('Loading vscode-languageserver/node...');
   ({
     createConnection,
     TextDocuments,
@@ -24,15 +16,12 @@ try {
     DiagnosticSeverity,
     CompletionItemKind,
   } = require('vscode-languageserver/node'));
-  
-  log('Loading other modules...');
+
   TextDocument = require('vscode-languageserver-textdocument').TextDocument;
   getCSSLanguageService = require('vscode-css-languageservice').getCSSLanguageService;
   URI = require('vscode-uri').URI;
   path = require('path');
-  log('Modules loaded successfully');
 } catch (e) {
-  log('FATAL ERROR DURING MODULE LOADING: ' + e.stack);
   process.exit(1);
 }
 
@@ -87,6 +76,10 @@ const cssService = getCSSLanguageService({
 
 const connection = createConnection(ProposedFeatures.all);
 const documents = new TextDocuments(TextDocument);
+
+const DEBUG = process.env.GTK_CSS_LSP_DEBUG === 'true';
+/** @param {string} msg */
+function debugLog(msg) { if (DEBUG) connection.console.log(msg); }
 
 // ─── Collecting colors from @define-color ────────────────────────────────────────
 
@@ -170,7 +163,7 @@ function extractImports(text, documentFsPath) {
  * @returns {Map<string, string>}
  */
 function collectAllColors(fsPath, visited = new Set()) {
-  log('Collecting colors from: ' + fsPath);
+  debugLog('Collecting colors from: ' + fsPath);
   if (visited.has(fsPath)) return new Map();
   visited.add(fsPath);
 
@@ -178,15 +171,15 @@ function collectAllColors(fsPath, visited = new Set()) {
   try {
     text = fs.readFileSync(fsPath, 'utf8');
   } catch (e) {
-    log('Failed to read: ' + fsPath + ' error: ' + e.message);
+    connection.console.error('Failed to read: ' + fsPath + ' error: ' + (e instanceof Error ? e.message : String(e)));
     return new Map();
   }
 
   const colors = extractDefineColors(text);
-  log('Found colors in file: ' + Array.from(colors.keys()).join(', '));
+  debugLog('Found colors in file: ' + Array.from(colors.keys()).join(', '));
 
   for (const importPath of extractImports(text, fsPath)) {
-    log('Following import: ' + importPath);
+    debugLog('Following import: ' + importPath);
     const imported = collectAllColors(importPath, visited);
     for (const [name, value] of imported) {
       if (!colors.has(name)) colors.set(name, value);
@@ -357,24 +350,24 @@ connection.onCompletion(params => {
   const document = documents.get(params.textDocument.uri);
   if (!document) return [];
 
-  log('Completion requested at: ' + params.position.line + ',' + params.position.character);
+  debugLog('Completion requested at: ' + params.position.line + ',' + params.position.character);
 
   const stylesheet = cssService.parseStylesheet(document);
   const cssCompletions = cssService.doComplete(document, params.position, stylesheet);
 
   const knownColors = collectAllColorsFromDocument(document);
-  log('Known colors for completion: ' + Array.from(knownColors.keys()).join(', '));
+  debugLog('Known colors for completion: ' + Array.from(knownColors.keys()).join(', '));
 
   const lineText = document.getText({
     start: { line: params.position.line, character: 0 },
     end: params.position
   });
-  log('Line text for completion: "' + lineText + '"');
+  debugLog('Line text for completion: "' + lineText + '"');
 
   const gtkItems = [];
   const triggerMatch = lineText.match(/@([a-zA-Z0-9_-]*)$/);
   if (triggerMatch || lineText.trimEnd().endsWith('@')) {
-    log('GTK Trigger detected');
+    debugLog('GTK Trigger detected');
     for (const [name, value] of knownColors) {
       gtkItems.push({
         label: `@${name}`,
@@ -387,7 +380,7 @@ connection.onCompletion(params => {
     }
   }
 
-  log('Returning ' + (cssCompletions?.items.length || 0) + ' CSS items and ' + gtkItems.length + ' GTK items');
+  debugLog('Returning ' + (cssCompletions?.items.length || 0) + ' CSS items and ' + gtkItems.length + ' GTK items');
   return {
     isIncomplete: cssCompletions?.isIncomplete ?? false,
     items: [...(cssCompletions?.items ?? []), ...gtkItems]
@@ -397,10 +390,10 @@ connection.onCompletion(params => {
 // ─── Hover ────────────────────────────────────────────────────────────────────
 
 connection.onHover(params => {
-  log('Hover requested at: ' + params.position.line + ',' + params.position.character);
+  debugLog('Hover requested at: ' + params.position.line + ',' + params.position.character);
   const document = documents.get(params.textDocument.uri);
   if (!document) {
-      log('Document not found for hover');
+      debugLog('Document not found for hover');
       return null;
   }
 
@@ -410,19 +403,19 @@ connection.onHover(params => {
     end: { line: params.position.line, character: 10000 }
   });
 
-  log('Line text: ' + lineText);
+  debugLog('Line text: ' + lineText);
 
   const atPattern = /@([a-zA-Z_][a-zA-Z0-9_-]*)/g;
   let match;
   while ((match = atPattern.exec(lineText)) !== null) {
     const start = match.index;
     const end = match.index + match[0].length;
-    log('Match found: ' + match[0] + ' at ' + start + '-' + end);
+    debugLog('Match found: ' + match[0] + ' at ' + start + '-' + end);
     if (params.position.character >= start && params.position.character <= end) {
       const colorName = match[1];
-      log('Checking color: ' + colorName);
+      debugLog('Checking color: ' + colorName);
       const knownColors = collectAllColorsFromDocument(document);
-      log('Known colors: ' + Array.from(knownColors.keys()).join(', '));
+      debugLog('Known colors: ' + Array.from(knownColors.keys()).join(', '));
       if (knownColors.has(colorName)) {
         const rawValue = knownColors.get(colorName);
         const resolvedValue = resolveColor(colorName, knownColors);
@@ -454,7 +447,7 @@ connection.onHover(params => {
   }
 
   // Fallback: hover CSS standard
-  log('No GTK color found, falling back to CSS hover');
+  debugLog('No GTK color found, falling back to CSS hover');
   const stylesheet = cssService.parseStylesheet(document);
   return cssService.doHover(document, params.position, stylesheet);
 });
