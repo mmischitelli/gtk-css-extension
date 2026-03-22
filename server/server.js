@@ -3,15 +3,26 @@
 
 const fs = require('fs');
 
-let createConnection, TextDocuments, ProposedFeatures, InitializeResult, TextDocumentSyncKind, DiagnosticSeverity, CompletionItemKind;
-let TextDocument, getCSSLanguageService, URI, path;
+let createConnection, TextDocuments, ProposedFeatures, TextDocumentSyncKind, CompletionItemKind;
+
+/** @type {typeof import('vscode-languageserver-textdocument').TextDocument} */
+let TextDocument;
+/** @type {typeof import('vscode-css-languageservice').getCSSLanguageService} */
+let getCSSLanguageService;
+/** @type {typeof import('vscode-uri').URI} */
+let URI;
+/** @type {typeof import('path')} */
+let path;
+/** @type {typeof import('vscode-languageserver/node').DiagnosticSeverity} */
+let DiagnosticSeverity;
+
+/** @typedef {import('vscode-languageserver').InitializeResult} InitializeResult */
 
 try {
   ({
     createConnection,
     TextDocuments,
     ProposedFeatures,
-    InitializeResult,
     TextDocumentSyncKind,
     DiagnosticSeverity,
     CompletionItemKind,
@@ -61,13 +72,10 @@ const gtkCustomData = {
 const cssService = getCSSLanguageService({
   customDataProviders: [
     {
-      getId: () => 'gtk-css',
-      isApplicable: () => true,
       providePseudoClasses: () => gtkCustomData.pseudoClasses || [],
       providePseudoElements: () => gtkCustomData.pseudoElements || [],
       provideAtDirectives: () => gtkCustomData.atDirectives || [],
       provideProperties: () => gtkCustomData.properties || [],
-      provideValues: () => []
     }
   ]
 });
@@ -189,6 +197,9 @@ function collectAllColors(fsPath, visited = new Set()) {
   return colors;
 }
 
+/** @typedef {import('vscode-languageserver-textdocument').TextDocument} TextDocument */
+/** @typedef {{ red: number, green: number, blue: number, alpha: number }} LspColor */
+
 /**
  * Version that first uses the document open in memory (if available),
  * then falls back to fs for imported files.
@@ -213,6 +224,42 @@ function collectAllColorsFromDocument(document) {
   }
 
   return colors;
+}
+
+/**
+ * Converts a CSS color string to LSP Color { red, green, blue, alpha } (0–1 range).
+ * Supports #rgb, #rrggbb, #rrggbbaa, rgb(), rgba().
+ * @param {string} css
+ * @returns {{ red: number, green: number, blue: number, alpha: number } | null}
+ */
+function parseCssColorToLsp(css) {
+  css = css.trim();
+
+  // #rgb
+  let m = css.match(/^#([0-9a-f]{3})$/i);
+  if (m) {
+    const [r, g, b] = m[1].split('').map(c => parseInt(c + c, 16) / 255);
+    return { red: r, green: g, blue: b, alpha: 1 };
+  }
+  // #rrggbb
+  m = css.match(/^#([0-9a-f]{6})$/i);
+  if (m) {
+    const n = parseInt(m[1], 16);
+    return { red: ((n >> 16) & 255) / 255, green: ((n >> 8) & 255) / 255, blue: (n & 255) / 255, alpha: 1 };
+  }
+  // #rrggbbaa
+  m = css.match(/^#([0-9a-f]{8})$/i);
+  if (m) {
+    const n = parseInt(m[1], 16);
+    return { red: ((n >> 24) & 255) / 255, green: ((n >> 16) & 255) / 255, blue: ((n >> 8) & 255) / 255, alpha: (n & 255) / 255 };
+  }
+  // rgb() / rgba()
+  m = css.match(/^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*([\d.]+))?\s*\)$/);
+  if (m) {
+    return { red: +m[1] / 255, green: +m[2] / 255, blue: +m[3] / 255, alpha: m[4] !== undefined ? +m[4] : 1 };
+  }
+
+  return null; // colori named (es. "red") non supportati inline
 }
 
 // ─── Virtual Document for Validation ──────────────────────────────────────
@@ -260,6 +307,126 @@ function buildVirtualText(text, knownColors) {
 }
 
 /**
+ * Parses a GTK color value into an LSP Color, handling GTK functions.
+ * @param {string} name
+ * @param {Map<string, string>} knownColors
+ * @param {Set<string>} [visited]
+ * @returns {LspColor | null}
+ */
+function resolveColorToLsp(name, knownColors, visited = new Set()) {
+  if (visited.has(name)) return null;
+  visited.add(name);
+
+  const value = knownColors.get(name);
+  if (!value) return null;
+
+  return parseCssColorValueToLsp(value, knownColors, visited);
+}
+
+/**
+ * Recursively evaluates a GTK CSS color expression.
+ * @param {string} value  raw value, e.g. "#ff0000", "@base", "alpha(@base, 0.5)", etc.
+ * @param {Map<string, string>} knownColors
+ * @param {Set<string>} visited
+ * @returns {LspColor | null}
+ */
+function parseCssColorValueToLsp(value, knownColors, visited = new Set()) {
+  value = value.trim();
+
+  if (value.startsWith('@')) {
+    return resolveColorToLsp(value.slice(1), knownColors, new Set(visited));
+  }
+
+  const call = parseFnCall(value);
+  if (call) {
+    const args = splitArgs(call.argsStr);
+
+    if (call.fn === 'alpha' && args.length === 2) {
+      const base = parseCssColorValueToLsp(args[0], knownColors, new Set(visited));
+      if (!base) return null;
+      return { ...base, alpha: clamp(parseFloat(args[1]), 0, 1) };
+    }
+    if (call.fn === 'shade' && args.length === 2) {
+      const base = parseCssColorValueToLsp(args[0], knownColors, new Set(visited));
+      if (!base) return null;
+      const f = parseFloat(args[1]);
+      return { red: clamp(base.red * f, 0, 1), green: clamp(base.green * f, 0, 1), blue: clamp(base.blue * f, 0, 1), alpha: base.alpha };
+    }
+    if (call.fn === 'mix' && args.length === 3) {
+      const c1 = parseCssColorValueToLsp(args[0], knownColors, new Set(visited));
+      const c2 = parseCssColorValueToLsp(args[1], knownColors, new Set(visited));
+      if (!c1 || !c2) return null;
+      const f = clamp(parseFloat(args[2]), 0, 1);
+      return {
+        red:   c1.red   * f + c2.red   * (1 - f),
+        green: c1.green * f + c2.green * (1 - f),
+        blue:  c1.blue  * f + c2.blue  * (1 - f),
+        alpha: c1.alpha * f + c2.alpha * (1 - f),
+      };
+    }
+    if (call.fn === 'lighter' && args.length === 1) {
+      const base = parseCssColorValueToLsp(args[0], knownColors, new Set(visited));
+      if (!base) return null;
+      return { red: clamp(base.red * 1.3, 0, 1), green: clamp(base.green * 1.3, 0, 1), blue: clamp(base.blue * 1.3, 0, 1), alpha: base.alpha };
+    }
+    if (call.fn === 'darker' && args.length === 1) {
+      const base = parseCssColorValueToLsp(args[0], knownColors, new Set(visited));
+      if (!base) return null;
+      return { red: clamp(base.red * 0.7, 0, 1), green: clamp(base.green * 0.7, 0, 1), blue: clamp(base.blue * 0.7, 0, 1), alpha: base.alpha };
+    }
+  }
+
+  return parseCssColorToLsp(value);
+}
+
+/**
+ * Splits "arg1, arg2, arg3" honoring nested brackets.
+ * @param {string} str
+ * @returns {string[]}
+ */
+function splitArgs(str) {
+  const args = [];
+  let depth = 0, current = '';
+  for (const ch of str) {
+    if (ch === '(') { depth++; current += ch; }
+    else if (ch === ')') { depth--; current += ch; }
+    else if (ch === ',' && depth === 0) { args.push(current.trim()); current = ''; }
+    else { current += ch; }
+  }
+  if (current.trim()) args.push(current.trim());
+  return args;
+}
+
+/**
+ * Extracts the function's name and the list of arguments.
+ * @param {string} value
+ * @returns {{ fn: string, argsStr: string } | null}
+ */
+function parseFnCall(value) {
+  const m = value.match(/^([\w-]+)\s*\((.+)\)$/s);
+  return m ? { fn: m[1], argsStr: m[2] } : null;
+}
+
+/**
+ * @param {number} v
+ * @param {number} min
+ * @param {number} max
+ * @returns {number}
+ */
+function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+
+/**
+ * @param {LspColor} c
+ * @returns {string}
+ */
+function lspColorToHex(c) {
+  const h = (/** @type {number} */ v) => Math.round(v * 255).toString(16).padStart(2, '0');
+  return c.alpha < 1
+    ? `rgba(${Math.round(c.red*255)}, ${Math.round(c.green*255)}, ${Math.round(c.blue*255)}, ${c.alpha.toFixed(2)})`
+    : `#${h(c.red)}${h(c.green)}${h(c.blue)}`;
+}
+
+/**
  * Residual error codes that might still be GTK false positives
  * (e.g. @define-color on older versions of the CSS language service).
  */
@@ -289,7 +456,8 @@ connection.onInitialize(() => {
         resolveProvider: false,
         triggerCharacters: ['@', ':', '-', '#']
       },
-      hoverProvider: true
+      hoverProvider: true,
+      colorProvider: true
     }
   };
   return result;
@@ -367,15 +535,23 @@ connection.onCompletion(params => {
   const gtkItems = [];
   const triggerMatch = lineText.match(/@([a-zA-Z0-9_-]*)$/);
   if (triggerMatch || lineText.trimEnd().endsWith('@')) {
-    debugLog('GTK Trigger detected');
+    const typed = triggerMatch ? triggerMatch[0] : '@'; // es. "@cy"
+    const replaceStart = params.position.character - typed.length;
+
     for (const [name, value] of knownColors) {
       gtkItems.push({
         label: `@${name}`,
         kind: CompletionItemKind.Color,
         detail: `GTK color: ${value}`,
         documentation: `@define-color ${name} ${value};`,
-        insertText: `@${name}`,
-        filterText: `@${name}`
+        filterText: `@${name}`,
+        textEdit: {
+          range: {
+            start: { line: params.position.line, character: replaceStart },
+            end:   { line: params.position.line, character: params.position.character }
+          },
+          newText: `@${name}`
+        }
       });
     }
   }
@@ -393,11 +569,10 @@ connection.onHover(params => {
   debugLog('Hover requested at: ' + params.position.line + ',' + params.position.character);
   const document = documents.get(params.textDocument.uri);
   if (!document) {
-      debugLog('Document not found for hover');
-      return null;
+    debugLog('Document not found for hover');
+    return null;
   }
 
-  // Checks if we are over a GTK @color_name
   const lineText = document.getText({
     start: { line: params.position.line, character: 0 },
     end: { line: params.position.line, character: 10000 }
@@ -411,34 +586,32 @@ connection.onHover(params => {
     const start = match.index;
     const end = match.index + match[0].length;
     debugLog('Match found: ' + match[0] + ' at ' + start + '-' + end);
+
     if (params.position.character >= start && params.position.character <= end) {
       const colorName = match[1];
       debugLog('Checking color: ' + colorName);
       const knownColors = collectAllColorsFromDocument(document);
       debugLog('Known colors: ' + Array.from(knownColors.keys()).join(', '));
+
       if (knownColors.has(colorName)) {
-        const rawValue = knownColors.get(colorName);
-        const resolvedValue = resolveColor(colorName, knownColors);
+        const rawValue = knownColors.get(colorName) ?? '';
+        const lspColor = resolveColorToLsp(colorName, knownColors);
 
         let markdown = `**GTK Color Variable**: \`${colorName}\`\n\n`;
 
-        if (resolvedValue) {
-          const previewUri = getColorPreviewUri(resolvedValue);
-          markdown += `![](${previewUri}) \`${resolvedValue}\`\n\n`;
-        }
-
-        if (resolvedValue !== rawValue) {
-          markdown += `Defined as: \`${rawValue}\``;
+        if (lspColor) {
+          const hex = lspColorToHex(lspColor);
+          markdown += `![](${getColorPreviewUri(hex)}) \`${hex}\`\n\n`;
+          if (rawValue && rawValue !== hex) {
+            markdown += `Defined as: \`${rawValue}\``;
+          }
         }
 
         return {
-          contents: {
-            kind: 'markdown',
-            value: markdown
-          },
+          contents: { kind: 'markdown', value: markdown },
           range: {
             start: { line: params.position.line, character: start },
-            end: { line: params.position.line, character: end }
+            end:   { line: params.position.line, character: end }
           }
         };
       }
@@ -446,10 +619,44 @@ connection.onHover(params => {
     }
   }
 
-  // Fallback: hover CSS standard
   debugLog('No GTK color found, falling back to CSS hover');
   const stylesheet = cssService.parseStylesheet(document);
   return cssService.doHover(document, params.position, stylesheet);
+});
+
+connection.onDocumentColor(params => {
+  const document = documents.get(params.textDocument.uri);
+  if (!document) return [];
+
+  const knownColors = collectAllColorsFromDocument(document);
+  const text = document.getText();
+  const results = [];
+
+  const pattern = /@([a-zA-Z_][a-zA-Z0-9_-]*)/g;
+  let match;
+  while ((match = pattern.exec(text)) !== null) {
+    const name = match[1];
+    if (!knownColors.has(name)) continue;
+
+    const color = resolveColorToLsp(name, knownColors);
+    if (!color) continue;
+
+    const start = document.positionAt(match.index);
+    const end   = document.positionAt(match.index + match[0].length);
+    results.push({ color, range: { start, end } });
+  }
+
+  return results;
+});
+
+connection.onColorPresentation(params => {
+  // Restituisce come scrivere il colore scelto (quando l'utente usa il color picker)
+  const { red: r, green: g, blue: b, alpha: a } = params.color;
+  const toHex = (/** @type {number} */ v) => Math.round(v * 255).toString(16).padStart(2, '0');
+  const hex = a < 1
+    ? `rgba(${Math.round(r*255)}, ${Math.round(g*255)}, ${Math.round(b*255)}, ${a.toFixed(2)})`
+    : `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+  return [{ label: hex }];
 });
 
 // ─── Start ────────────────────────────────────────────────────────────────────

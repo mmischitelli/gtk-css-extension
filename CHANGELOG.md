@@ -2,6 +2,20 @@
 
 All notable changes to the **GTK CSS** extension will be documented in this file.
 
+## [1.4.0] - 2026-03-22
+
+### Added
+- Inline color decorators for GTK color variables via `documentColorProvider`, matching the native behavior of hex/rgb colors in VS Code
+- Support for nested GTK color function expressions (e.g. `alpha(shade(@base, 1.2), 0.5)`)
+
+### Fixed
+- Autocomplete duplication: typing `@cy` + Tab no longer produces `@cy@cyan`; completion items now use `textEdit` with an explicit replace range
+- Hover tooltip showing black/no preview for colors defined via GTK functions (`alpha`, `shade`, `mix`, `lighter`, `darker`)
+
+### Changed
+- GTK color functions are now fully evaluated recursively to produce a resolved color value used consistently across hover, inline decorators and color picker
+- Type annotations improved throughout the server (`@typedef`, `@type`) for full `@ts-check` compliance
+
 ## [1.3.0] - 2026-03-19
 
 ### Changed
