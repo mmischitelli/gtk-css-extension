@@ -2,6 +2,16 @@
 
 All notable changes to the **GTK CSS** extension will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+- Color variables referenced by a file imported alongside their definition file (root imports `styles/colors.gtk.css` + `styles/powerline_arrows.gtk.css`) no longer produce spurious `css-propertyvalueexpected` errors and cascades in the leaf file.
+
+### Changed
+- The server now owns GTK color checking: references outside strings, comments and URL tokens are replaced with length-preserving placeholders before CSS parsing. Unresolved references receive warnings (`gtk-undefinedcolor`) at the original token range. The message explicitly describes the local import-tree limit: a root stylesheet can supply valid definitions through sibling imports.
+- Validation preserves comments, strings (including escaped quotes and line continuations), and quoted or unquoted URLs verbatim. Comment delimiters inside strings cannot hide code or introduce parser errors; uppercase CSS at-rules remain directives, while color names remain case-sensitive.
+- Added protocol-level regression tests for lexical boundaries, original UTF-16 diagnostic ranges, and retained CSS syntax errors. Sibling-import fixtures verify the root/leaf behavior; the undefined-color guard checks the warning code, severity and exact token range.
+
 ## [1.5.0] - 2026-03-22
 
 ### Added

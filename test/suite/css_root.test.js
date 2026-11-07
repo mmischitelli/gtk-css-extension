@@ -11,8 +11,14 @@
  *   ├── with-css-root.gtk.css   has @css-root directive pointing to ./deploy
  *   ├── circular-a.gtk.css      imports circular-b (cycle detection)
  *   ├── circular-b.gtk.css      imports circular-a (cycle detection)
- *   └── deploy/
- *       └── remote.gtk.css      defines remote_color
+ *   ├── deploy/
+ *   │   └── remote.gtk.css      defines remote_color
+ *   └── sibling-imports/        fixtures used by sibling_imports.test.js
+ *       ├── style.gtk.css       root: imports styles/colors + styles/powerline_arrows
+ *       └── styles/
+ *           ├── colors.gtk.css           defines no0, no1, re0
+ *           ├── powerline_arrows.gtk.css references @no1/@no0 with no own @import
+ *           └── undefined-color.gtk.css  references @definitely_undefined_color
  *
  * This file lives at: <project_root>/test/suite/css_root.test.js
  */
