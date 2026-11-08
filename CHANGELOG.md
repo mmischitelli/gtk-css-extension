@@ -2,7 +2,7 @@
 
 All notable changes to the **GTK CSS** extension will be documented in this file.
 
-## [Unreleased]
+## [1.6.0] - 2026-11-08
 
 ### Fixed
 - Color variables referenced by a file imported alongside their definition file (root imports `styles/colors.gtk.css` + `styles/powerline_arrows.gtk.css`) no longer produce spurious `css-propertyvalueexpected` errors and cascades in the leaf file.
