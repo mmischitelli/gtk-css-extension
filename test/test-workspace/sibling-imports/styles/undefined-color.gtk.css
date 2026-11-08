@@ -1,0 +1,6 @@
+/* Deliberately references a color that is defined nowhere in the workspace.
+   It must keep being reported even after issue #1 is fixed, so the sibling
+   import fix cannot silence diagnostics globally and pass its own test. */
+#guard-must-stay-broken {
+    color: @definitely_undefined_color;
+}

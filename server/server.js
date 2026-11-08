@@ -247,11 +247,26 @@ function parseCssColorToLsp(css) {
 
 // ─── Virtual Document for Validation ──────────────────────────────────────
 
+const CSS_AT_RULES = new Set([
+  'import', 'media', 'keyframes', 'charset', 'font-face', 'supports',
+  'namespace', 'page', 'layer', 'container', 'document', 'viewport',
+  'counter-style', 'define-color', 'apply', 'custom-media',
+  'color-profile', 'property', 'starting-style'
+]);
+
 /**
- * Creates a virtual text where every known @color_name reference is
- * replaced with a valid CSS placeholder of the SAME length.
- * This prevents the CSS parser from getting confused and producing
- * cascading errors (e.g. "at-rule or selector expected" inside @keyframes).
+ * @typedef {{ name: string, offset: number, length: number, known: boolean }} ColorRef
+ */
+
+/**
+ * Creates a virtual text where EVERY @color reference — resolved or not —
+ * is replaced with a valid CSS placeholder of the SAME length, so the
+ * generic CSS parser never sees a GTK color token and cannot produce
+ * cascading errors when a definition lives in a sibling import.
+ *
+ * Color checking is owned by the extension itself: references absent from
+ * this file's import tree receive a warning from colorReferenceDiagnostics.
+ * Strings, comments and URL tokens are preserved verbatim for the CSS parser.
  *
  * Replacement strategy for @name (length L = name.length + 1):
  *   - If L <= 3: uses "red" truncated to L ("r", "re", "red")
@@ -260,33 +275,101 @@ function parseCssColorToLsp(css) {
  *
  * @param {string} text
  * @param {Map<string, string>} knownColors
- * @returns {string}
+ * @returns {{ virtualText: string, refs: ColorRef[] }}
  */
 function buildVirtualText(text, knownColors) {
-  // Replaces only @name outside of @define-color, @import, and other known at-rules
-  return text.replace(
-    /@([a-zA-Z_][a-zA-Z0-9_-]*)/g,
-    (match, name) => {
-      // Do not touch standard CSS/GTK at-rules
-      const CSS_AT_RULES = new Set([
-        'import', 'media', 'keyframes', 'charset', 'font-face', 'supports',
-        'namespace', 'page', 'layer', 'container', 'document', 'viewport',
-        'counter-style', 'define-color', 'apply', 'custom-media',
-        'color-profile', 'property', 'starting-style'
-      ]);
-      if (CSS_AT_RULES.has(name)) return match;
-
-      if (knownColors.has(name)) {
-        const L = match.length; // original length including @
-        const placeholder = 'red';
-        if (L <= placeholder.length) {
-          return placeholder.slice(0, L);
-        }
-        return placeholder + ' '.repeat(L - placeholder.length);
-      }
-      return match; // unknown color: leave unchanged (will be a real error)
+  /** @type {ColorRef[]} */
+  const refs = [];
+  const parts = [];
+  const tokens = /\/\*|["']|url\(|\\[\s\S]|@([a-zA-Z_][a-zA-Z0-9_-]*)/gi;
+  let copiedThrough = 0;
+  let token;
+  while ((token = tokens.exec(text)) !== null) {
+    const offset = token.index;
+    const value = token[0];
+    if (value === '/*') {
+      const end = text.indexOf('*/', tokens.lastIndex);
+      tokens.lastIndex = end === -1 ? text.length : end + 2;
+      continue;
     }
-  );
+    if (value === '"' || value === "'") {
+      tokens.lastIndex = skipQuotedString(text, offset);
+      continue;
+    }
+    if (value.toLowerCase() === 'url(' &&
+        (offset === 0 || !/[\w\u0080-\uFFFF-]/.test(text[offset - 1]))) {
+      // An unquoted URL can contain @, quotes escaped with a backslash,
+      // and escaped closing parentheses. None of these denote GTK colors.
+      let end = tokens.lastIndex;
+      while (end < text.length && text[end] !== ')') {
+        if (text[end] === '"' || text[end] === "'") {
+          end = skipQuotedString(text, end);
+        } else {
+          end += text[end] === '\\' ? 2 : 1;
+        }
+      }
+      tokens.lastIndex = Math.min(end + 1, text.length);
+      continue;
+    }
+    const name = token[1];
+    if (!name || CSS_AT_RULES.has(name.toLowerCase())) continue;
+
+    refs.push({ name, offset, length: value.length, known: knownColors.has(name) });
+    parts.push(text.slice(copiedThrough, offset),
+      'red'.slice(0, value.length).padEnd(value.length, ' '));
+    copiedThrough = offset + value.length;
+  }
+  parts.push(text.slice(copiedThrough));
+  const virtualText = parts.join('');
+  return { virtualText, refs };
+}
+
+/**
+ * Skips a CSS string, including escaped quotes and line continuations.
+ * An unescaped newline ends a bad string; leave it for the CSS parser.
+ * @param {string} text
+ * @param {number} start  opening quote offset
+ * @returns {number} first offset after the string, or at its terminating newline
+ */
+function skipQuotedString(text, start) {
+  const quote = text[start];
+  let i = start + 1;
+  while (i < text.length) {
+    if (text[i] === quote) return i + 1;
+    if (text[i] === '\r' || text[i] === '\n' || text[i] === '\f') return i;
+    if (text[i] === '\\') {
+      i += text[i + 1] === '\r' && text[i + 2] === '\n' ? 3 : 2;
+    } else {
+      i++;
+    }
+  }
+  return text.length;
+}
+
+/**
+ * Extension-owned diagnostics for @color references the server could not
+ * resolve from this file's own definition tree. Emitted as warnings, not
+ * errors: at GTK runtime the definition may legitimately live in a root
+ * stylesheet that imports this file alongside the file defining the colors
+ * which a per-file validator cannot see.
+ *
+ * @param {ColorRef[]} refs
+ * @param {TextDocument} document  original (unmasked) document, for positions
+ * @returns {import('vscode-languageserver').Diagnostic[]}
+ */
+function colorReferenceDiagnostics(refs, document) {
+  return refs
+    .filter(ref => !ref.known)
+    .map(ref => ({
+      severity: DiagnosticSeverity.Warning,
+      range: {
+        start: document.positionAt(ref.offset),
+        end: document.positionAt(ref.offset + ref.length)
+      },
+      message: `GTK color '@${ref.name}' is not resolved in this file's import tree`,
+      code: 'gtk-undefinedcolor',
+      source: 'gtk-css'
+    }));
 }
 
 /**
@@ -454,10 +537,11 @@ connection.onInitialize(() => {
 function validateDocument(document) {
   const knownColors = collectAllColorsFromDocument(document);
 
-  // Creates a virtual document with @color_name replaced by valid placeholders.
-  // This prevents the CSS parser from producing cascading errors (e.g. inside
-  // @keyframes when it encounters background-color: @red).
-  const virtualText = buildVirtualText(document.getText(), knownColors);
+  // Creates a virtual document with EVERY @color reference (resolved or not)
+  // replaced by valid placeholders: the CSS parser never sees a GTK color
+  // token, so it cannot cascade (e.g. inside @keyframes). Unresolved
+  // references are reported by the extension's own diagnostics below.
+  const { virtualText, refs } = buildVirtualText(document.getText(), knownColors);
   const virtualDoc = TextDocument.create(
     document.uri,
     document.languageId,
@@ -484,7 +568,8 @@ function validateDocument(document) {
   }));
 
   const filtered = filterResidueDiagnostics(lspDiagnostics);
-  connection.sendDiagnostics({ uri: document.uri, diagnostics: filtered });
+  const colorDiagnostics = colorReferenceDiagnostics(refs, document);
+  connection.sendDiagnostics({ uri: document.uri, diagnostics: filtered.concat(colorDiagnostics) });
 }
 
 documents.onDidChangeContent(change => {
